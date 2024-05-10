@@ -97,10 +97,6 @@ type Dialer struct {
 	// is always disabled. Error messages are thus not logged by default.
 	ErrorLog *slog.Logger
 
-	// ErrorLog is a logger that errors from packet decoding are logged to. It may be set to a logger that
-	// simply discards the messages.
-	ErrorLog *log.Logger
-
 	// UpstreamDialer is a dialer that will override the default dialer for
 	// opening outgoing connections. The default is a net.Dial("udp", ...).
 	UpstreamDialer UpstreamDialer
@@ -227,7 +223,7 @@ func (dialer Dialer) DialContext(ctx context.Context, address string) (*Conn, er
 		return nil, dialer.error("dial", err)
 	}
 
-	cs := &connState{conn: conn, raddr: conn.RemoteAddr(), id: atomic.AddInt64(&dialerID, 1), ticker: time.NewTicker(time.Second / 2), protocol: currentProtocol}
+	cs := &connState{conn: conn, raddr: conn.RemoteAddr(), id: atomic.AddInt64(&dialerID, 1), ticker: time.NewTicker(time.Second / 2), protocol: protocolVersion}
 	if dialer.ProtocolVersion != 0 {
 		cs.protocol = dialer.ProtocolVersion
 	}

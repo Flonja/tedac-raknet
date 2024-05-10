@@ -7,6 +7,7 @@ import (
 	"github.com/sandertv/go-raknet/internal/message"
 	"hash/crc32"
 	"net"
+	"slices"
 	"time"
 )
 
@@ -17,8 +18,9 @@ type connectionHandler interface {
 }
 
 type listenerConnectionHandler struct {
-	l          *Listener
-	cookieSalt uint32
+	l             *Listener
+	cookieSalt    uint32
+	incomingConns map[net.Addr]byte
 }
 
 var (
@@ -87,7 +89,7 @@ func (h listenerConnectionHandler) handleOpenConnectionRequest1(b []byte, addr n
 	}
 	mtuSize := min(pk.MTU, maxMTUSize)
 
-	if pk.ClientProtocol != protocolVersion {
+	if !slices.Contains(h.l.protocols, pk.ClientProtocol) {
 		data, _ := (&message.IncompatibleProtocolVersion{ServerGUID: h.l.id, ServerProtocol: protocolVersion}).MarshalBinary()
 		_, _ = h.l.conn.WriteTo(data, addr)
 		return fmt.Errorf("handle OPEN_CONNECTION_REQUEST_1: incompatible protocol version %v (listener protocol = %v)", pk.ClientProtocol, protocolVersion)
@@ -95,12 +97,18 @@ func (h listenerConnectionHandler) handleOpenConnectionRequest1(b []byte, addr n
 
 	data, _ := (&message.OpenConnectionReply1{ServerGUID: h.l.id, Cookie: h.cookie(addr), ServerHasSecurity: true, MTU: mtuSize}).MarshalBinary()
 	_, err := h.l.conn.WriteTo(data, addr)
+	if err == nil {
+		h.incomingConns[addr] = pk.ClientProtocol
+	}
 	return err
 }
 
 // handleOpenConnectionRequest2 handles an open connection request 2 packet
 // stored in buffer b, coming from an address.
 func (h listenerConnectionHandler) handleOpenConnectionRequest2(b []byte, addr net.Addr) error {
+	defer func() {
+		delete(h.incomingConns, addr)
+	}()
 	pk := &message.OpenConnectionRequest2{ServerHasSecurity: true}
 	if err := pk.UnmarshalBinary(b); err != nil {
 		return fmt.Errorf("read OPEN_CONNECTION_REQUEST_2: %w", err)
@@ -115,7 +123,11 @@ func (h listenerConnectionHandler) handleOpenConnectionRequest2(b []byte, addr n
 		return fmt.Errorf("send OPEN_CONNECTION_REPLY_2: %w", err)
 	}
 
-	conn := newConn(h.l.conn, addr, mtuSize, h)
+	protocol := protocolVersion
+	if version, ok := h.incomingConns[addr]; ok {
+		protocol = version
+	}
+	conn := newConn(h.l.conn, addr, protocol, mtuSize, h)
 	h.l.connections.Store(resolve(addr), conn)
 
 	go func() {

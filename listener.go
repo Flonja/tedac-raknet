@@ -104,18 +104,18 @@ func (conf ListenConfig) Listen(address string) (*Listener, error) {
 		return nil, &net.OpError{Op: "listen", Net: "raknet", Source: nil, Addr: nil, Err: err}
 	}
 	listener := &Listener{
-		conf:     conf,
-		conn:     conn,
-		incoming: make(chan *Conn),
-		closed:   make(chan struct{}),
-		id:       atomic.AddInt64(&listenerID, 1),
-		sec:      newSecurity(conf),
-		protocols: []byte{currentProtocol},
+		conf:      conf,
+		conn:      conn,
+		incoming:  make(chan *Conn),
+		closed:    make(chan struct{}),
+		id:        atomic.AddInt64(&listenerID, 1),
+		sec:       newSecurity(conf),
+		protocols: []byte{protocolVersion},
 	}
 	if len(conf.ProtocolVersions) > 0 {
 		listener.protocols = append(listener.protocols, conf.ProtocolVersions...)
 	}
-	listener.handler = &listenerConnectionHandler{l: listener, cookieSalt: rand.Uint32()}
+	listener.handler = &listenerConnectionHandler{l: listener, cookieSalt: rand.Uint32(), incomingConns: make(map[net.Addr]byte)}
 	listener.pongData.Store(new([]byte))
 
 	go listener.listen()
@@ -205,7 +205,11 @@ func (listener *Listener) listen() {
 func (listener *Listener) handle(b []byte, addr net.Addr) error {
 	value, found := listener.connections.Load(resolve(addr))
 	if !found {
-		return listener.handler.handleUnconnected(b, addr)
+		err := listener.handler.handleUnconnected(b, addr)
+		if err != nil {
+			delete(listener.handler.incomingConns, addr)
+		}
+		return err
 	}
 	conn := value.(*Conn)
 	select {
